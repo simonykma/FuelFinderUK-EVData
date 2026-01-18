@@ -1,0 +1,55 @@
+name: Sync UK EV Data from OCM Export
+
+on:
+  schedule:
+    - cron: '0 5 * * *'  # Daily at 5 AM UTC
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout our repo
+        uses: actions/checkout@v4
+
+      - name: Clone OCM Export (sparse checkout - GB only)
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/openchargemap/ocm-export.git ocm-export
+          cd ocm-export
+          git sparse-checkout set data/GB data/referencedata.json
+
+      - name: Combine UK stations into single file
+        run: |
+          mkdir -p public
+          
+          # Combine all UK POI files into one JSON array
+          echo "[" > public/uk-ev-stations.json
+          first=true
+          for file in ocm-export/data/GB/*.json; do
+            if [ "$first" = true ]; then
+              first=false
+            else
+              echo "," >> public/uk-ev-stations.json
+            fi
+            cat "$file" >> public/uk-ev-stations.json
+          done
+          echo "]" >> public/uk-ev-stations.json
+          
+          # Copy reference data
+          cp ocm-export/data/referencedata.json public/
+          
+          # Get station count
+          STATION_COUNT=$(ls ocm-export/data/GB/*.json 2>/dev/null | wc -l | tr -d ' ')
+          
+          # Create metadata
+          echo "{\"updated\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"count\":$STATION_COUNT}" > public/metadata.json
+          
+          echo "✅ Combined $STATION_COUNT UK EV stations"
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
