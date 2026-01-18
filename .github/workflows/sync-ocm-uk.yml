@@ -17,45 +17,48 @@ jobs:
       - name: Checkout our repo
         uses: actions/checkout@v4
 
-      - name: Clone OCM Export (GB data only)
+      - name: Download GB data from OCM Export
         run: |
-          git clone --depth 1 --filter=blob:none --sparse \
-            https://github.com/openchargemap/ocm-export.git ocm-export
-          cd ocm-export
-          git sparse-checkout set data/GB data
+          # Download just the GB folder using GitHub's archive feature
+          curl -L "https://github.com/openchargemap/ocm-export/archive/refs/heads/main.zip" -o ocm.zip
+          unzip -q ocm.zip "ocm-export-main/data/GB/*" || true
+          mv ocm-export-main/data/GB ./GB-data || mkdir -p ./GB-data
+          rm -rf ocm.zip ocm-export-main
+          
+          echo "Downloaded $(ls ./GB-data/*.json 2>/dev/null | wc -l) UK stations"
 
       - name: Combine UK stations into single file
         run: |
           mkdir -p public
           
-          # Combine all UK POI files into one JSON array
-          echo "[" > public/uk-ev-stations.json
-          first=true
-          for file in ocm-export/data/GB/*.json; do
-            if [ -f "$file" ]; then
-              if [ "$first" = true ]; then
-                first=false
-              else
-                echo "," >> public/uk-ev-stations.json
+          # Use jq if available, otherwise use shell
+          if command -v jq &> /dev/null; then
+            jq -s '.' ./GB-data/*.json > public/uk-ev-stations.json
+          else
+            # Combine all UK POI files into one JSON array
+            echo "[" > public/uk-ev-stations.json
+            first=true
+            for file in ./GB-data/*.json; do
+              if [ -f "$file" ]; then
+                if [ "$first" = true ]; then
+                  first=false
+                else
+                  echo "," >> public/uk-ev-stations.json
+                fi
+                cat "$file" >> public/uk-ev-stations.json
               fi
-              cat "$file" >> public/uk-ev-stations.json
-            fi
-          done
-          echo "]" >> public/uk-ev-stations.json
-          
-          # Copy reference data if exists
-          if [ -f "ocm-export/data/referencedata.json" ]; then
-            cp ocm-export/data/referencedata.json public/
+            done
+            echo "]" >> public/uk-ev-stations.json
           fi
           
           # Get station count
-          STATION_COUNT=$(ls ocm-export/data/GB/*.json 2>/dev/null | wc -l | tr -d ' ')
+          STATION_COUNT=$(ls ./GB-data/*.json 2>/dev/null | wc -l | tr -d ' ')
           
           # Create metadata
           echo "{\"updated\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"count\":$STATION_COUNT}" > public/metadata.json
           
           echo "✅ Combined $STATION_COUNT UK EV stations"
-          ls -la public/
+          ls -lh public/
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
