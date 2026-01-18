@@ -2,8 +2,12 @@ name: Sync UK EV Data from OCM Export
 
 on:
   schedule:
-    - cron: '0 5 * * *'  # Daily at 5 AM UTC
-  workflow_dispatch:      # Manual trigger
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
 
 jobs:
   sync:
@@ -13,12 +17,12 @@ jobs:
       - name: Checkout our repo
         uses: actions/checkout@v4
 
-      - name: Clone OCM Export (sparse checkout - GB only)
+      - name: Clone OCM Export (GB data only)
         run: |
           git clone --depth 1 --filter=blob:none --sparse \
             https://github.com/openchargemap/ocm-export.git ocm-export
           cd ocm-export
-          git sparse-checkout set data/GB data/referencedata.json
+          git sparse-checkout set data/GB data
 
       - name: Combine UK stations into single file
         run: |
@@ -28,17 +32,21 @@ jobs:
           echo "[" > public/uk-ev-stations.json
           first=true
           for file in ocm-export/data/GB/*.json; do
-            if [ "$first" = true ]; then
-              first=false
-            else
-              echo "," >> public/uk-ev-stations.json
+            if [ -f "$file" ]; then
+              if [ "$first" = true ]; then
+                first=false
+              else
+                echo "," >> public/uk-ev-stations.json
+              fi
+              cat "$file" >> public/uk-ev-stations.json
             fi
-            cat "$file" >> public/uk-ev-stations.json
           done
           echo "]" >> public/uk-ev-stations.json
           
-          # Copy reference data
-          cp ocm-export/data/referencedata.json public/
+          # Copy reference data if exists
+          if [ -f "ocm-export/data/referencedata.json" ]; then
+            cp ocm-export/data/referencedata.json public/
+          fi
           
           # Get station count
           STATION_COUNT=$(ls ocm-export/data/GB/*.json 2>/dev/null | wc -l | tr -d ' ')
@@ -47,6 +55,7 @@ jobs:
           echo "{\"updated\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"count\":$STATION_COUNT}" > public/metadata.json
           
           echo "✅ Combined $STATION_COUNT UK EV stations"
+          ls -la public/
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
